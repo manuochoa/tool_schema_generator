@@ -1,0 +1,27 @@
+{
+  "name": "tool-schema-generator",
+  "version": "1.0.0",
+  "description": "Generate AI-readable tool schemas from simple annotations.",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "jest"
+  },
+  "keywords": [
+    "tool-schema",
+    "annotations",
+    "AI",
+    "npm-package"
+  ],
+  "author": "Manu8a",
+  "license": "MIT",
+  "dependencies": {
+    "glob": "^10.2.7"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "typescript": "^5.7.3"
+  }
+}
