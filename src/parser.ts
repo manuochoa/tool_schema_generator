@@ -50,73 +50,6 @@ export function parseAnnotations(filePath: string): ParsedAnnotation[] {
  * -------------------- JS PARSER (strict) --------------------
  * Plain JS files rely on "@param <type> <name> <desc>" lines.
  */
-// export function parseJsAnnotations(content: string): ParsedAnnotation[] {
-//   // 1) Find all /** ... */ blocks
-//   const annotationRegex = /\/\*\*(.*?)\*\//gs;
-//   const matches = [...content.matchAll(annotationRegex)];
-
-//   return matches.map((match) => {
-//     const block = match[1].trim();
-
-//     // 2) Extract @notice
-//     const notice = /@notice (.+)/.exec(block)?.[1] || "";
-
-//     // 3) Grab lines with "@param ..." (in any form)
-//     //    We'll do a simpler approach: find lines containing "@param "
-//     const rawParamLines = [...block.matchAll(/@param\s+([^\r\n]+)/g)];
-
-//     // 4) Convert each line into a param object
-//     const params = rawParamLines.map(([, rest]) => {
-//       // Check if it matches the enum pattern first:
-//       //  @param enum color [red, green, blue] This is the color
-//       const enumMatch = rest.match(/^enum\s+(\w+)\s*\[([^\]]+)\]\s*(.*)$/);
-//       if (enumMatch) {
-//         const [, paramName, bracketedList, desc] = enumMatch;
-//         // parse bracketedList => "red, green, blue"
-//         const enumValues = bracketedList
-//           .split(",")
-//           .map((s) => s.trim())
-//           .filter(Boolean); // remove empty entries
-
-//         // Return an object with "type": "string", plus "enum": [...]
-//         return {
-//           name: paramName,
-//           description: desc.trim(),
-//           type: "string", // base JSON type
-//           enum: enumValues, // allowed string values
-//         };
-//       }
-
-//       // Otherwise, check if it's the normal pattern: <type> <name> <description...>
-//       // e.g. "string userName This is the user name param"
-//       const normalMatch = rest.match(/^(\w+)\s+(\w+)\s+(.+)/);
-//       if (normalMatch) {
-//         const [, type, paramName, desc] = normalMatch;
-//         return {
-//           name: paramName,
-//           description: desc.trim(),
-//           type, // e.g. "string", "number", "boolean", etc.
-//         };
-//       }
-
-//       // If neither pattern matched => invalid line
-//       throw new Error(
-//         `Invalid @param usage:\n@param ${rest}\n` +
-//           `Must be either "@param enum <paramName> [val1, val2] desc" or "@param <type> <paramName> desc"`
-//       );
-//     });
-
-//     // 5) Try to find the function name
-//     //    (looking for patterns like function foo(...), async function foo(...), etc.)
-//     const functionName = getJsFunctionName(content);
-//     console.log("functionName", functionName);
-//     console.log("content", content);
-//     console.log("params", params);
-//     console.log("notice", notice);
-
-//     return { notice, params, functionName };
-//   });
-// }
 export function parseJsAnnotations(content: string): ParsedAnnotation[] {
   const annotationRegex = /\/\*\*(.*?)\*\//gs;
   let match: RegExpExecArray | null;
@@ -170,11 +103,15 @@ function parseDocBlock(block: string): {
         .map((s) => s.trim())
         .filter(Boolean); // remove empty entries
 
+      // check if the enums are number, if not use type string
+      const isNumber = enumValues.every((val) => !isNaN(Number(val)));
+      const type = isNumber ? "number" : "string";
+
       // Return an object with "type": "string", plus "enum": [...]
       return {
         name: paramName,
         description: desc.trim(),
-        type: "string", // base JSON type
+        type, // base JSON type
         enum: enumValues, // allowed string values
       };
     }
@@ -184,6 +121,17 @@ function parseDocBlock(block: string): {
     const normalMatch = rest.match(/^(\w+)\s+(\w+)\s+(.+)/);
     if (normalMatch) {
       const [, type, paramName, desc] = normalMatch;
+
+      // Validate the type
+      // Check the type is in our whitelist:
+      if (!JSON_SCHEMA_TYPES.has(type)) {
+        throw new Error(
+          `Invalid @param type '${type}' for param '${paramName}'. Allowed types: ${[
+            ...JSON_SCHEMA_TYPES,
+          ].join(", ")}`
+        );
+      }
+
       return {
         name: paramName,
         description: desc.trim(),
@@ -229,29 +177,6 @@ function findNextFunctionName(remaining: string): string {
   }
   return "unknown";
 }
-// function getJsFunctionName(content: string): string {
-//   // We’ll run each pattern in turn; the first match wins.
-//   const patterns = [
-//     // async function functionName(...) {
-//     /\basync\s+function\s+(\w+)\s*\(/,
-//     // function functionName(...) {
-//     /\bfunction\s+(\w+)\s*\(/,
-//     // const functionName = async (...) =>
-//     /\bconst\s+(\w+)\s*=\s*async\s*\(/,
-//     // const functionName = (...) =>
-//     /\bconst\s+(\w+)\s*=\s*\(/,
-//   ];
-
-//   for (const regex of patterns) {
-//     const match = regex.exec(content);
-//     if (match) {
-//       return match[1];
-//     }
-//   }
-
-//   // No pattern matched => unknown
-//   return "unknown";
-// }
 /**
  * -------------------- TS PARSER --------------------
  * Uses a Program + TypeChecker to get real types from the AST.

@@ -8,6 +8,6 @@ export async function getUserTokenBalanceJs({ userName, token }) {}
 /**
  * @notice Just testing a new function
  * @param boolean param1 this is the description for param1
- * @param enum param2 [red,white,blue] this is the description for param2
+ * @param enum param2 [1,2,3] this is the description for param2
  */
 const thisIsANewFunctionJs = async ({ param1, param2 }) => {};
