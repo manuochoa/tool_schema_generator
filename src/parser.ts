@@ -422,14 +422,36 @@ function buildJsonSchema(type: ts.Type, checker: ts.TypeChecker): any {
 
   // Union => oneOf
   if (type.isUnion()) {
-    const variants = type.types.map((t) => buildJsonSchema(t, checker));
-    // If all are string literals => single string with enum
-    const allStringLits = variants.every((v) => v.enum && v.type === "string");
+    // Build sub-schemas
+    const subSchemas = type.types.map((t) => {
+      const sch = buildJsonSchema(t, checker);
+      return sch;
+    });
+
+    // Filter out any 'any' if we have recognized other more specific sub-schemas.
+    // For instance, if subSchemas is [ { type: "any" }, { type: "string" } ],
+    // we might prefer just { oneOf: [ { type: "string" } ] } if we know it's purely string/number, etc.
+    const nonAny = subSchemas.filter(
+      (s) => !(s.type === "any" && Object.keys(s).length === 1)
+    );
+    if (nonAny.length === 0) {
+      // everything was "any"
+      return { type: "any" };
+    }
+    if (nonAny.length === 1) {
+      // effectively a single known type
+      return nonAny[0];
+    }
+
+    // Also check if all are string literals => single enum
+    const allStringLits = nonAny.every((v) => v.enum && v.type === "string");
     if (allStringLits) {
-      const combinedEnums = variants.flatMap((v) => v.enum ?? []);
+      const combinedEnums = nonAny.flatMap((v) => v.enum ?? []);
       return { type: "string", enum: combinedEnums };
     }
-    return { oneOf: variants };
+
+    // If we have multiple recognized sub-schemas, do oneOf
+    return { oneOf: nonAny };
   }
 
   // Intersection => allOf
