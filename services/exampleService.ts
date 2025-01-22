@@ -1,7 +1,15 @@
 interface User {
   name: string;
   age: number;
+  address?: Address;
 }
+
+interface Address {
+  street: string;
+  city?: string | number;
+  country?: string;
+}
+
 /**
  * @notice Fetch the token balance for a user based on their username and token details.
  * @param user The user. This can be a wallet address, Discord ID, etc.

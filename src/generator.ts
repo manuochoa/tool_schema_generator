@@ -7,14 +7,7 @@ export interface Schema {
     description: string;
     parameters: {
       type: string;
-      properties: Record<
-        string,
-        {
-          type: string;
-          description: string;
-          enum?: string[];
-        }
-      >;
+      properties: Record<string, any>;
       required: string[];
     };
   };
@@ -29,32 +22,26 @@ export function generateSchema({
   params,
   functionName,
 }: ParsedAnnotation): Schema {
-  const properties: Record<
-    string,
-    {
-      type: string;
-      description: string;
-      enum?: string[];
-    }
-  > = {};
-
+  // We'll allow any shape under "properties" because
+  // a param might be an object, array, union, etc.
+  const properties: Record<string, any> = {};
   const required: string[] = [];
 
-  params.forEach(({ name, description, type, enum: enumValues }) => {
-    // If `enum` is present, add it to the schema property
+  params.forEach(({ name, description, schema, enum: enumValues }) => {
+    // 1) Start with the entire schema from the parser
+    //    (e.g. { type: "object", properties: {...}, required: [...] }).
+    // 2) Add/override the "description" from JSDoc.
+    const finalSchema = {
+      ...schema, // Keep everything (type, properties, etc.)
+      description, // Overwrite/merge with JSDoc description
+    };
+
+    // If we also have an `enum`, attach it
     if (enumValues && enumValues.length > 0) {
-      properties[name] = {
-        type,
-        description,
-        enum: enumValues,
-      };
-    } else {
-      // Normal (non-enum) property
-      properties[name] = {
-        type,
-        description,
-      };
+      finalSchema.enum = enumValues;
     }
+
+    properties[name] = finalSchema;
     required.push(name);
   });
 

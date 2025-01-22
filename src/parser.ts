@@ -2,8 +2,8 @@ import fs from "fs";
 import ts from "typescript";
 
 /**
- * Whitelist of valid JS types you'd like to allow.
- * You can expand this list with e.g. "object", "array", "any", etc.
+ * Whitelist of valid JS/JSON Schema base types you'd like to allow
+ * in your @param lines for plain JS. (Not used for TS interfaces.)
  */
 const JSON_SCHEMA_TYPES = new Set([
   "string",
@@ -15,29 +15,84 @@ const JSON_SCHEMA_TYPES = new Set([
   "null",
 ]);
 
-/**
- * Schema interface you want to produce.
- */
 export interface ParsedAnnotation {
   notice: string;
-  params: {
+  functionName: string;
+  params: Array<{
     name: string;
     description: string;
-    type: string; // "string", "number", etc. or "string" for enum
-    enum?: string[]; // Only present if it's an enum type
-  }[];
-  functionName: string;
+    schema: any; // JSON schema
+    enum?: string[];
+  }>;
 }
 
 interface ParsedParam {
   name: string;
   description: string;
-  type: string; // e.g. "string", "number", "boolean", "any", etc.
-  enum?: string[]; // Only present if it's an enum type
+  type: string;
+  enum?: string[];
 }
 
 /**
- * Entry point for parsing either TS or JS files.
+ * Determine if a symbol or type is optional:
+ *  - check 'SymbolFlags.Optional'
+ *  - or if it's a union containing 'undefined'
+ */
+function isOptionalProp(prop: ts.Symbol, propType: ts.Type): boolean {
+  const optionalFlag = Boolean(prop.flags & ts.SymbolFlags.Optional);
+  // Check if union includes undefined
+  const includesUndefined =
+    propType.isUnion() &&
+    propType.types.some((t) => Boolean(t.flags & ts.TypeFlags.Undefined));
+
+  return optionalFlag || includesUndefined;
+}
+
+/**
+ * Remove 'undefined' from a union (e.g. 'string | undefined' => 'string')
+ * If multiple non-undefined remain, we keep it as a union (no call to getUnionType).
+ */
+function removeUndefinedFromUnion(
+  type: ts.Type,
+  checker: ts.TypeChecker
+): ts.Type | null {
+  if (!type.isUnion()) return type;
+
+  // Filter out 'undefined' types
+  const filtered = type.types.filter(
+    (t) => !(t.flags & ts.TypeFlags.Undefined)
+  );
+
+  if (filtered.length === 0) {
+    // e.g. everything was undefined => fallback
+    return checker.getAnyType();
+  }
+  if (filtered.length === 1) {
+    // e.g. string | undefined => string
+    return filtered[0];
+  }
+
+  // e.g. string | number | undefined => string | number
+  // We can't call checker.getUnionType in older TS, so we just build a union type
+  // we’ll do a naive approach: if there's more than 1 leftover, keep it as the original union minus undefined
+  // so we effectively reconstruct a new union type node if possible, or fallback to the original
+  // For older TS versions, we can’t easily create a brand-new union type, so let's:
+  // 1) if the count is unchanged (just removed undefined from original), 'type' is effectively that union
+  // 2) or fallback to "type" minus the undefined. We'll handle it with your own "isUnion()" logic afterwards.
+
+  // If we removed exactly one type (the undefined) from the union, we can rely on type being a union minus undefined
+  // But older TS doesn't easily let us rebuild that union as a new ts.Type. So let's fallback:
+
+  // We'll do: if the length changed, we handle the union with the 'type.types = filtered' approach
+  // That also won't compile in older TS if 'types' is readonly. So simpler is to return null and let the caller handle it
+  // BUT your code then can't do anything with that. We'll just keep returning null, so you can interpret that as "no rewrite."
+
+  // Easiest approach: Return null and let the caller do normal union logic
+  return null;
+}
+
+/**
+ * -------------------- JS PARSER --------------------
  */
 export function parseAnnotations(filePath: string): ParsedAnnotation[] {
   return filePath.endsWith(".ts")
@@ -45,11 +100,6 @@ export function parseAnnotations(filePath: string): ParsedAnnotation[] {
     : parseJsAnnotations(fs.readFileSync(filePath, "utf-8"));
 }
 
-/**
-/**
- * -------------------- JS PARSER (strict) --------------------
- * Plain JS files rely on "@param <type> <name> <desc>" lines.
- */
 export function parseJsAnnotations(content: string): ParsedAnnotation[] {
   const annotationRegex = /\/\*\*(.*?)\*\//gs;
   let match: RegExpExecArray | null;
@@ -57,22 +107,28 @@ export function parseJsAnnotations(content: string): ParsedAnnotation[] {
 
   while ((match = annotationRegex.exec(content)) !== null) {
     const docBlockText = match[1].trim();
-
-    // The end of this doc block in the file
     const docBlockEndIndex = annotationRegex.lastIndex;
 
-    // Now parse the doc block for e.g. @notice, @param lines, etc.
     const { notice, params } = parseDocBlock(docBlockText);
-
-    // Next, find the function name that appears *after* this doc block
-    // so we slice from docBlockEndIndex onward
     const remainingContent = content.slice(docBlockEndIndex);
-    const fnName = findNextFunctionName(remainingContent); // see below
+    const fnName = findNextFunctionName(remainingContent);
+
+    const paramSchemas = params.map((p) => {
+      const baseSchema: any = { type: p.type };
+      if (p.enum) {
+        baseSchema.enum = p.enum;
+      }
+      return {
+        name: p.name,
+        description: p.description,
+        schema: baseSchema,
+      };
+    });
 
     annotations.push({
       notice,
-      params,
       functionName: fnName,
+      params: paramSchemas,
     });
   }
 
@@ -83,106 +139,74 @@ function parseDocBlock(block: string): {
   notice: string;
   params: ParsedParam[];
 } {
-  // 1) Extract @notice
   const notice = /@notice (.+)/.exec(block)?.[1] || "";
-
-  // 2) Grab lines with "@param ..." (in any form)
-  //    We'll do a simpler approach: find lines containing "@param "
   const rawParamLines = [...block.matchAll(/@param\s+([^\r\n]+)/g)];
 
-  // 3) Convert each line into a param object
   const params = rawParamLines.map(([, rest]) => {
-    // Check if it matches the enum pattern first:
-    //  e.g. "@param enum color [red, green, blue] This is the color"
+    // @param enum color [red, green] desc
     const enumMatch = rest.match(/^enum\s+(\w+)\s*\[([^\]]+)\]\s*(.*)$/);
     if (enumMatch) {
       const [, paramName, bracketedList, desc] = enumMatch;
-      // parse bracketedList => "red, green, blue"
       const enumValues = bracketedList
         .split(",")
         .map((s) => s.trim())
-        .filter(Boolean); // remove empty entries
-
-      // check if the enums are number, if not use type string
+        .filter(Boolean);
       const isNumber = enumValues.every((val) => !isNaN(Number(val)));
       const type = isNumber ? "number" : "string";
 
-      // Return an object with "type": "string", plus "enum": [...]
       return {
         name: paramName,
         description: desc.trim(),
-        type, // base JSON type
-        enum: enumValues, // allowed string values
+        type,
+        enum: enumValues,
       };
     }
 
-    // Otherwise, check if it's the normal pattern: "<type> <name> <description...>"
-    // e.g. "string userName This is the user name param"
+    // normal
     const normalMatch = rest.match(/^(\w+)\s+(\w+)\s+(.+)/);
     if (normalMatch) {
       const [, type, paramName, desc] = normalMatch;
-
-      // Validate the type
-      // Check the type is in our whitelist:
       if (!JSON_SCHEMA_TYPES.has(type)) {
         throw new Error(
-          `Invalid @param type '${type}' for param '${paramName}'. Allowed types: ${[
+          `Invalid @param type '${type}' for param '${paramName}'. Allowed: ${[
             ...JSON_SCHEMA_TYPES,
           ].join(", ")}`
         );
       }
-
       return {
         name: paramName,
         description: desc.trim(),
-        type, // e.g. "string", "number", "boolean", etc.
+        type,
       };
     }
 
-    // If neither pattern matched => invalid line
     throw new Error(
       `Invalid @param usage:\n@param ${rest}\n` +
-        `Must be either "@param enum <paramName> [val1, val2] desc" or "@param <type> <paramName> desc"`
+        `Must be "@param enum <paramName> [val1, val2] desc" or "@param <type> <paramName> desc"`
     );
   });
 
   return { notice, params };
 }
 
-/**
- * Attempt to detect function name from these patterns:
- * 1) function functionName(...)
- * 2) async function functionName(...)
- * 3) const functionName = (...)
- * 4) const functionName = async (...)
- */
 function findNextFunctionName(remaining: string): string {
-  // We’ll run each pattern in turn; the first match wins, within `remaining`.
   const patterns = [
-    // async function functionName(...) {
     /\basync\s+function\s+(\w+)\s*\(/,
-    // function functionName(...) {
     /\bfunction\s+(\w+)\s*\(/,
-    // const functionName = async (...) =>
     /\bconst\s+(\w+)\s*=\s*async\s*\(/,
-    // const functionName = (...) =>
     /\bconst\s+(\w+)\s*=\s*\(/,
   ];
-
   for (const regex of patterns) {
     const match = regex.exec(remaining);
-    if (match) {
-      return match[1];
-    }
+    if (match) return match[1];
   }
   return "unknown";
 }
+
 /**
- * -------------------- TS PARSER --------------------
- * Uses a Program + TypeChecker to get real types from the AST.
+ * -------------------- TS PARSER (with optional fields) --------------------
  */
 function parseTsAnnotations(filePath: string): ParsedAnnotation[] {
-  // Create a Program so we can get a TypeChecker
   const program = ts.createProgram([filePath], {
     target: ts.ScriptTarget.ESNext,
     module: ts.ModuleKind.CommonJS,
@@ -190,135 +214,41 @@ function parseTsAnnotations(filePath: string): ParsedAnnotation[] {
   });
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(filePath);
-  if (!sourceFile) {
-    throw new Error(`File not found: ${filePath}`);
-  }
+  if (!sourceFile) throw new Error(`File not found: ${filePath}`);
 
   const annotations: ParsedAnnotation[] = [];
 
-  /**
-   * Recursively visit each node in the AST.
-   */
   function visit(node: ts.Node) {
-    // 1) Handle classic function declarations
     if (ts.isFunctionDeclaration(node) && node.name && node.parameters) {
       parseFunctionDeclaration(node);
-    }
-    // 2) Handle variable declarations that might be arrow functions
-    else if (ts.isVariableDeclaration(node)) {
+    } else if (ts.isVariableDeclaration(node)) {
+      // arrow function
       if (node.initializer && ts.isArrowFunction(node.initializer)) {
         parseArrowFunctionVariable(node);
       }
     }
-
     ts.forEachChild(node, visit);
   }
 
-  /**
-   * Parse a classic function declaration (e.g. `export async function foo(...)`)
-   */
   function parseFunctionDeclaration(node: ts.FunctionDeclaration) {
     const functionName = node.name?.text || "anonymous";
-
-    // Grab the JSDoc tags for this function
     const jsDocTags = ts.getJSDocTags(node);
-    // Find @notice
-    const noticeTag = jsDocTags.find((tag) => tag.tagName.text === "notice");
-    const notice =
-      typeof noticeTag?.comment === "string" ? noticeTag.comment.trim() : "";
-
-    // Gather params info
-    const params: Array<{
-      name: string;
-      type: string;
-      description: string;
-    }> = [];
-
-    node.parameters.forEach((param) => {
-      if (ts.isObjectBindingPattern(param.name)) {
-        // Destructured param
-        param.name.elements.forEach((element) => {
-          if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
-            const propertyName = element.name.text;
-            const propType = getPropertyType(checker, param, propertyName);
-            const jsDocParam = findJsDocParam(jsDocTags, propertyName);
-            const description = jsDocParam
-              ? extractDescriptionFromParamTag(jsDocParam)
-              : "";
-            params.push({ name: propertyName, type: propType, description });
-          }
-        });
-      } else if (ts.isIdentifier(param.name)) {
-        // Standard param
-        const paramName = param.name.text;
-        let paramType = "any";
-        if (param.type) {
-          const typeObj = checker.getTypeFromTypeNode(param.type);
-          paramType = checker.typeToString(typeObj);
-        }
-        const jsDocParam = findJsDocParam(jsDocTags, paramName);
-        const description = jsDocParam
-          ? extractDescriptionFromParamTag(jsDocParam)
-          : "";
-        params.push({ name: paramName, type: paramType, description });
-      }
-    });
-
-    annotations.push({ notice, params, functionName });
+    const notice = extractNotice(jsDocTags);
+    const params = expandParameters(node.parameters, jsDocTags, checker);
+    annotations.push({ notice, functionName, params });
   }
 
-  /**
-   * Parse a variable-declaration arrow function (e.g. `const foo = async(...) => {}`)
-   */
   function parseArrowFunctionVariable(node: ts.VariableDeclaration) {
     let functionName = "anonymous";
     if (ts.isIdentifier(node.name)) {
       functionName = node.name.text;
     }
-
-    // Gather JSDoc from the variable declaration
     const jsDocTags = ts.getJSDocTags(node);
-
-    // Look for @notice
-    const noticeTag = jsDocTags.find((tag) => tag.tagName.text === "notice");
-    const notice =
-      typeof noticeTag?.comment === "string" ? noticeTag.comment.trim() : "";
+    const notice = extractNotice(jsDocTags);
 
     const arrowFn = node.initializer as ts.ArrowFunction;
-    const params: Array<{ name: string; type: string; description: string }> =
-      [];
-
-    arrowFn.parameters.forEach((param) => {
-      if (ts.isObjectBindingPattern(param.name)) {
-        // destructured param
-        param.name.elements.forEach((element) => {
-          if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
-            const propertyName = element.name.text;
-            const propType = getPropertyType(checker, param, propertyName);
-            const jsDocParam = findJsDocParam(jsDocTags, propertyName);
-            const description = jsDocParam
-              ? extractDescriptionFromParamTag(jsDocParam)
-              : "";
-            params.push({ name: propertyName, type: propType, description });
-          }
-        });
-      } else if (ts.isIdentifier(param.name)) {
-        // normal param
-        const paramName = param.name.text;
-        let paramType = "any";
-        if (param.type) {
-          const typeObj = checker.getTypeFromTypeNode(param.type);
-          paramType = checker.typeToString(typeObj);
-        }
-        const jsDocParam = findJsDocParam(jsDocTags, paramName);
-        const description = jsDocParam
-          ? extractDescriptionFromParamTag(jsDocParam)
-          : "";
-        params.push({ name: paramName, type: paramType, description });
-      }
-    });
-
-    annotations.push({ notice, params, functionName });
+    const params = expandParameters(arrowFn.parameters, jsDocTags, checker);
+    annotations.push({ notice, functionName, params });
   }
 
   visit(sourceFile);
@@ -326,27 +256,202 @@ function parseTsAnnotations(filePath: string): ParsedAnnotation[] {
 }
 
 /**
- * For destructured params, e.g. function foo({ userName, token }: { userName: string; token: number })
+ * Expand each parameter. If destructured => multiple top-level params.
  */
-function getPropertyType(
-  checker: ts.TypeChecker,
-  param: ts.ParameterDeclaration,
-  propertyName: string
-): string {
-  if (!param.type) return "any";
-  const objType = checker.getTypeFromTypeNode(param.type);
-  const propSymbol = objType.getProperty(propertyName);
-  if (!propSymbol) return "any";
+function expandParameters(
+  tsParams: readonly ts.ParameterDeclaration[],
+  jsDocTags: readonly ts.JSDocTag[],
+  checker: ts.TypeChecker
+) {
+  const result: Array<{
+    name: string;
+    description: string;
+    schema: any;
+  }> = [];
 
-  const decl = propSymbol.valueDeclaration || propSymbol.declarations?.[0];
-  if (!decl) return "any";
+  tsParams.forEach((param) => {
+    if (ts.isObjectBindingPattern(param.name)) {
+      param.name.elements.forEach((element) => {
+        if (ts.isBindingElement(element) && ts.isIdentifier(element.name)) {
+          const propName = element.name.text;
+          const propType = getSubPropertyType(checker, param, propName);
 
-  const propType = checker.getTypeOfSymbolAtLocation(propSymbol, decl);
-  return checker.typeToString(propType);
+          const jsDocParam = findJsDocParam(jsDocTags, propName);
+          const rawComment = jsDocParam?.comment;
+          let description = "";
+          if (typeof rawComment === "string") {
+            description = rawComment.trim();
+          }
+
+          const schema = buildJsonSchema(propType, checker);
+
+          result.push({ name: propName, description, schema });
+        }
+      });
+    } else {
+      const built = buildParamSchema(param, jsDocTags, checker);
+      result.push(built);
+    }
+  });
+
+  return result;
 }
 
 /**
- * Looks for a matching @param tag (which is a ts.JSDocParameterTag).
+ * Non-destructured param
+ */
+function buildParamSchema(
+  param: ts.ParameterDeclaration,
+  jsDocTags: readonly ts.JSDocTag[],
+  checker: ts.TypeChecker
+): { name: string; description: string; schema: any } {
+  let paramName = "anonymousParam";
+  if (ts.isIdentifier(param.name)) {
+    paramName = param.name.text;
+  }
+
+  const jsDocParam = findJsDocParam(jsDocTags, paramName);
+  const rawComment = jsDocParam?.comment;
+  let description = "";
+  if (typeof rawComment === "string") {
+    description = rawComment.trim();
+  }
+
+  if (!param.type) {
+    return {
+      name: paramName,
+      description,
+      schema: { type: "any" },
+    };
+  }
+
+  const tsType = checker.getTypeFromTypeNode(param.type);
+  const schema = buildJsonSchema(tsType, checker);
+
+  return {
+    name: paramName,
+    description,
+    schema,
+  };
+}
+
+function getSubPropertyType(
+  checker: ts.TypeChecker,
+  param: ts.ParameterDeclaration,
+  propName: string
+): ts.Type {
+  if (!param.type) {
+    return checker.getAnyType();
+  }
+  const parentType = checker.getTypeFromTypeNode(param.type);
+  const propSymbol = parentType.getProperty(propName);
+  if (!propSymbol) {
+    return checker.getAnyType();
+  }
+  const decl = propSymbol.valueDeclaration || propSymbol.declarations?.[0];
+  if (!decl) {
+    return checker.getAnyType();
+  }
+  return checker.getTypeOfSymbolAtLocation(propSymbol, decl);
+}
+
+/**
+ * Recursively build a JSON schema for TS type
+ * with optional fields support.
+ */
+function buildJsonSchema(type: ts.Type, checker: ts.TypeChecker): any {
+  // Filter out undefined from union => optional
+  const withoutUndef = removeUndefinedFromUnion(type, checker);
+  if (withoutUndef) {
+    type = withoutUndef;
+  }
+
+  // String literal => e.g. "hello"
+  if (type.isStringLiteral()) {
+    return { type: "string", enum: [type.value] };
+  }
+
+  // Basic flags
+  if (type.flags & ts.TypeFlags.String) return { type: "string" };
+  if (type.flags & ts.TypeFlags.Number) return { type: "number" };
+  if (type.flags & ts.TypeFlags.Boolean) return { type: "boolean" };
+
+  // Array
+  if (checker.isArrayType && checker.isArrayType(type)) {
+    const typeRef = type as ts.TypeReference;
+    if (typeRef.typeArguments && typeRef.typeArguments.length > 0) {
+      const [elemType] = typeRef.typeArguments;
+      return {
+        type: "array",
+        items: buildJsonSchema(elemType, checker),
+      };
+    }
+    return { type: "array", items: { type: "any" } };
+  }
+
+  // Object/Interface => gather properties
+  if (type.isClassOrInterface() || type.getProperties().length > 0) {
+    const props: Record<string, any> = {};
+    const required: string[] = [];
+
+    for (const prop of type.getProperties()) {
+      const decl = prop.valueDeclaration || prop.declarations?.[0];
+      if (!decl) {
+        props[prop.name] = { type: "any" };
+        continue;
+      }
+      const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
+
+      // Check if optional
+      const optional = isOptionalProp(prop, propType);
+      // Build schema for property
+      let subSchema = buildJsonSchema(propType, checker);
+
+      props[prop.name] = subSchema;
+      if (!optional) {
+        required.push(prop.name);
+      }
+    }
+
+    return {
+      type: "object",
+      properties: props,
+      required,
+    };
+  }
+
+  // Union => oneOf
+  if (type.isUnion()) {
+    const variants = type.types.map((t) => buildJsonSchema(t, checker));
+    // If all are string literals => single string with enum
+    const allStringLits = variants.every((v) => v.enum && v.type === "string");
+    if (allStringLits) {
+      const combinedEnums = variants.flatMap((v) => v.enum ?? []);
+      return { type: "string", enum: combinedEnums };
+    }
+    return { oneOf: variants };
+  }
+
+  // Intersection => allOf
+  if (type.isIntersection()) {
+    const variants = type.types.map((t) => buildJsonSchema(t, checker));
+    return { allOf: variants };
+  }
+
+  // Fallback => any
+  return { type: "any" };
+}
+
+/**
+ * Extract @notice text
+ */
+function extractNotice(jsDocTags: readonly ts.JSDocTag[]): string {
+  const tag = jsDocTags.find((t) => t.tagName.text === "notice");
+  return typeof tag?.comment === "string" ? tag.comment.trim() : "";
+}
+
+/**
+ * Find matching @param
  */
 function findJsDocParam(
   jsDocTags: readonly ts.JSDocTag[],
@@ -354,21 +459,10 @@ function findJsDocParam(
 ): ts.JSDocParameterTag | undefined {
   for (const tag of jsDocTags) {
     if (ts.isJSDocParameterTag(tag)) {
-      // e.g. tag.name.text === 'token', tag.comment = 'The token desc...'
       if (ts.isIdentifier(tag.name) && tag.name.text === paramName) {
         return tag;
       }
     }
   }
   return undefined;
-}
-
-/**
- * The description is the full tag.comment, e.g. "The token to search for..."
- */
-function extractDescriptionFromParamTag(tag: ts.JSDocParameterTag): string {
-  if (typeof tag.comment === "string") {
-    return tag.comment.trim();
-  }
-  return "";
 }
