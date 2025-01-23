@@ -75,8 +75,8 @@ interface Address {
 
 /**
  * @description Fetch the token balance for a user based on their username and token details.
- * @param user The user. This can be a wallet address, Discord ID, etc.
- * @param token The token to search for, which can be its symbol, address, or name.
+ * @param user The user object.
+ * @param token The token ID to search for.
  */
 export async function getUserTokenBalance({
   user,
@@ -87,7 +87,7 @@ export async function getUserTokenBalance({
 }): Promise<void> {}
 ```
 
-## Run the schema generator:
+Run the schema generator:
 
 ```bash
 npm start
@@ -101,11 +101,13 @@ Similarly, for JavaScript files, ensure JSDoc comments are used:
 
 ```javascript
 /**
- * Fetch the token balance for a user based on their username and token details.
- * @param {string} userName - The username of the user. This can be a wallet address, Discord ID, etc.
- * @param {number | string} [token] - The token to search for, which can be its symbol, address, or name.
+ * @description This function handles a user object
+ * @param {object} user The user object
+ * @property {string} user.name The user’s name
+ * @property {number} [user.age] The user’s age
+ * @param {number} token - The token ID to search for.
  */
-export async function getUserTokenBalanceJs({ userName, token }) {}
+function getUserTokenBalance({ user, token }) {}
 ```
 
 Run the schema generator:
@@ -115,6 +117,8 @@ npm start
 ```
 
 This will scan your JavaScript files (.js) in the services directory, parse the JSDoc comments, and generate JSON schemas.
+
+### Note: Since JavaScript is not a typed language, JSDoc comments for JS files need to be more detailed, and types must be explicitly provided where possible to ensure accurate schema generation.
 
 ## General Instructions
 
@@ -145,7 +149,7 @@ const response = await openai.createChatCompletion({
 console.log(response.data);
 ```
 
-This setup allows your AI agents or applications to understand and use the functions defined in your code without the need to manually create the files.
+- This setup allows your AI agents or applications to understand and use the functions defined in your code without the need to manually create the files.
 
 ## Output Example
 
@@ -157,20 +161,31 @@ Example schema for a tool:
     "type": "function",
     "function": {
       "name": "getUserTokenBalance",
-      "description": "Fetch the token balance for a user based on their username and token details.",
+      "description": "This function handles a user object",
       "parameters": {
         "type": "object",
         "properties": {
-          "userName": {
-            "type": "string",
-            "description": "The username of the user. This can be a wallet address, Discord ID, etc."
+          "user": {
+            "type": "object",
+            "description": "The user object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The user’s name"
+              },
+              "age": {
+                "type": "number",
+                "description": "The user’s age"
+              }
+            },
+            "required": ["name"]
           },
           "token": {
-            "oneOf": [{ "type": "number" }, { "type": "string" }],
-            "description": "The token to search for, which can be its symbol, address, or name."
+            "type": "number",
+            "description": "The token ID to search for."
           }
         },
-        "required": ["userName", "token"]
+        "required": ["user", "token"]
       }
     }
   }
