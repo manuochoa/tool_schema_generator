@@ -11,7 +11,7 @@ interface Address {
 }
 
 /**
- * @notice Fetch the token balance for a user based on their username and token details.
+ * @description Fetch the token balance for a user based on their username and token details.
  * @param user The user. This can be a wallet address, Discord ID, etc.
  * @param token The token to search for, which can be its symbol, address, or name.
  */
@@ -24,7 +24,7 @@ export async function getUserTokenBalance({
 }): Promise<void> {}
 
 /**
- * @notice Just testing a new function
+ * @description Just testing a new function
  * @param param1 this is the description for param1
  * @param param2 this is the description for param2
  */

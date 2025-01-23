@@ -1,17 +1,4 @@
-import { ParsedAnnotation } from "./parser";
-
-export interface Schema {
-  type: string;
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: string;
-      properties: Record<string, any>;
-      required: string[];
-    };
-  };
-}
+import { ParsedAnnotation, Schema } from "./types";
 
 /**
  * Generate an OpenAI "function calling" style schema
