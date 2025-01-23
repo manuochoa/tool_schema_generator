@@ -30,7 +30,6 @@ export function parseJsAnnotations(content: string): ParsedAnnotation[] {
       content.slice(docBlockEndIndex - match[0].length, docBlockEndIndex)
     );
     if (isCommentedOut) {
-      console.warn("Skipped a commented-out function or doc block.");
       continue;
     }
 
@@ -41,9 +40,6 @@ export function parseJsAnnotations(content: string): ParsedAnnotation[] {
     const fnName = findNextFunctionName(remainingContent);
 
     if (fnName === "unknown") {
-      console.warn(
-        "Function name could not be determined. Skipping this JSDoc comment."
-      );
       continue; // Skip if function name is unknown
     }
 
@@ -239,14 +235,31 @@ function parseType(rawType: string) {
   if (finalType.includes("|")) {
     const subs = finalType.split("|").map((s) => s.trim());
     unionSubTypes = subs;
+
+    // Check if all subtypes are valid
+    const invalidSubTypes = subs.filter(
+      (subType) => !JSON_SCHEMA_TYPES.includes(subType)
+    );
+    if (invalidSubTypes.length > 0) {
+      throw new Error(
+        `Invalid type(s) in union: ${invalidSubTypes.join(
+          ", "
+        )}. Valid types are: ${JSON_SCHEMA_TYPES.join(", ")}.`
+      );
+    }
+
     finalType = "union"; // we'll build "oneOf" later
   } else if (finalType === "enum") {
     isEnum = true;
     finalType = "any"; // refine later if bracket found
   } else {
-    // normal type => fallback if not recognized
-    if (!JSON_SCHEMA_TYPES.has(finalType)) {
-      finalType = "any";
+    // Normal type => validate against JSON_SCHEMA_TYPES
+    if (!JSON_SCHEMA_TYPES.includes(finalType)) {
+      throw new Error(
+        `Invalid type: ${rawType}. Valid types are: ${JSON_SCHEMA_TYPES.join(
+          ", "
+        )}.`
+      );
     }
   }
 
@@ -308,7 +321,7 @@ function createBaseSchema(rp: RawParam): any {
   if (rp.unionSubTypes && rp.unionSubTypes.length > 0) {
     const variants = rp.unionSubTypes.map((st) => {
       const lc = st.toLowerCase();
-      return JSON_SCHEMA_TYPES.has(lc) ? { type: lc } : { type: "any" };
+      return JSON_SCHEMA_TYPES.includes(lc) ? { type: lc } : { type: "any" };
     });
     return {
       oneOf: variants,

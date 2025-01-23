@@ -1,7 +1,5 @@
-import fs from "fs";
 import ts from "typescript";
-import { ParsedAnnotation, ParsedParam, JSON_SCHEMA_TYPES } from "./types";
-import { parseJsAnnotations } from "./parsers/parseJs";
+import { ParsedAnnotation } from "../types";
 
 /**
  * Determine if a symbol or type is optional:
@@ -62,121 +60,9 @@ function removeUndefinedFromUnion(
 }
 
 /**
- * -------------------- JS PARSER --------------------
- */
-export function parseAnnotations(filePath: string): ParsedAnnotation[] {
-  return filePath.endsWith(".ts")
-    ? parseTsAnnotations(filePath)
-    : parseJsAnnotations(fs.readFileSync(filePath, "utf-8"));
-}
-
-// export function parseJsAnnotations(content: string): ParsedAnnotation[] {
-//   const annotationRegex = /\/\*\*(.*?)\*\//gs;
-//   let match: RegExpExecArray | null;
-//   const annotations: ParsedAnnotation[] = [];
-
-//   while ((match = annotationRegex.exec(content)) !== null) {
-//     const docBlockText = match[1].trim();
-//     const docBlockEndIndex = annotationRegex.lastIndex;
-
-//     const { notice, params } = parseDocBlock(docBlockText);
-//     const remainingContent = content.slice(docBlockEndIndex);
-//     const fnName = findNextFunctionName(remainingContent);
-
-//     const paramSchemas = params.map((p) => {
-//       const baseSchema: any = { type: p.type };
-//       if (p.enum) {
-//         baseSchema.enum = p.enum;
-//       }
-//       return {
-//         name: p.name,
-//         description: p.description,
-//         schema: baseSchema,
-//       };
-//     });
-
-//     annotations.push({
-//       notice,
-//       functionName: fnName,
-//       params: paramSchemas,
-//     });
-//   }
-
-//   return annotations;
-// }
-
-// function parseDocBlock(block: string): {
-//   notice: string;
-//   params: ParsedParam[];
-// } {
-//   const notice = /@notice (.+)/.exec(block)?.[1] || "";
-//   const rawParamLines = [...block.matchAll(/@param\s+([^\r\n]+)/g)];
-
-//   const params = rawParamLines.map(([, rest]) => {
-//     // @param enum color [red, green] desc
-//     const enumMatch = rest.match(/^enum\s+(\w+)\s*\[([^\]]+)\]\s*(.*)$/);
-//     if (enumMatch) {
-//       const [, paramName, bracketedList, desc] = enumMatch;
-//       const enumValues = bracketedList
-//         .split(",")
-//         .map((s) => s.trim())
-//         .filter(Boolean);
-//       const isNumber = enumValues.every((val) => !isNaN(Number(val)));
-//       const type = isNumber ? "number" : "string";
-
-//       return {
-//         name: paramName,
-//         description: desc.trim(),
-//         type,
-//         enum: enumValues,
-//       };
-//     }
-
-//     // normal
-//     const normalMatch = rest.match(/^(\w+)\s+(\w+)\s+(.+)/);
-//     if (normalMatch) {
-//       const [, type, paramName, desc] = normalMatch;
-//       if (!JSON_SCHEMA_TYPES.has(type)) {
-//         throw new Error(
-//           `Invalid @param type '${type}' for param '${paramName}'. Allowed: ${[
-//             ...JSON_SCHEMA_TYPES,
-//           ].join(", ")}`
-//         );
-//       }
-//       return {
-//         name: paramName,
-//         description: desc.trim(),
-//         type,
-//       };
-//     }
-
-//     throw new Error(
-//       `Invalid @param usage:\n@param ${rest}\n` +
-//         `Must be "@param enum <paramName> [val1, val2] desc" or "@param <type> <paramName> desc"`
-//     );
-//   });
-
-//   return { notice, params };
-// }
-
-// function findNextFunctionName(remaining: string): string {
-//   const patterns = [
-//     /\basync\s+function\s+(\w+)\s*\(/,
-//     /\bfunction\s+(\w+)\s*\(/,
-//     /\bconst\s+(\w+)\s*=\s*async\s*\(/,
-//     /\bconst\s+(\w+)\s*=\s*\(/,
-//   ];
-//   for (const regex of patterns) {
-//     const match = regex.exec(remaining);
-//     if (match) return match[1];
-//   }
-//   return "unknown";
-// }
-
-/**
  * -------------------- TS PARSER (with optional fields) --------------------
  */
-function parseTsAnnotations(filePath: string): ParsedAnnotation[] {
+export function parseTsAnnotations(filePath: string): ParsedAnnotation[] {
   const program = ts.createProgram([filePath], {
     target: ts.ScriptTarget.ESNext,
     module: ts.ModuleKind.CommonJS,

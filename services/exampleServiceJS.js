@@ -15,8 +15,8 @@ const thisIsANewFunctionJs = async ({ param1, param2 }) => {};
 
 /**
  * @description This function handles a user object
- * @param {object} user The user object
- * @property {string} user.name The user’s name
+ * @param {obj} user The user object
+ * @property {strin} user.name The user’s name
  * @property {number} [user.age] The user’s age
  * @param {number} token - The token ID
  */

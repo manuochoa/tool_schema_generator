@@ -23,6 +23,10 @@ const OUTPUT_FILE = path.join(__dirname, "../schemas.json");
       `Schema generation completed! ${schemas.length} schemas written to ${OUTPUT_FILE}`
     );
   } catch (error) {
-    console.error("Error during schema generation:", error);
+    if (error instanceof Error) {
+      console.error("Error during schema generation:", error.message);
+    } else {
+      console.error("Error during schema generation:", error);
+    }
   }
 })();

@@ -2,7 +2,7 @@
  * Whitelist of valid JS/JSON Schema base types you'd like to allow
  * in your @param lines for plain JS. (Not used for TS interfaces.)
  */
-export const JSON_SCHEMA_TYPES = new Set([
+export const JSON_SCHEMA_TYPES = [
   "string",
   "number",
   "integer",
@@ -10,7 +10,7 @@ export const JSON_SCHEMA_TYPES = new Set([
   "object",
   "array",
   "null",
-]);
+];
 
 export interface ParsedAnnotation {
   notice: string;
