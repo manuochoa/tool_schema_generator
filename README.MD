@@ -5,6 +5,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue)
 
 Tools Schema Generator is a utility for generating JSON schemas from JSDoc comments to streamline the integration of tools with OpenAI's function calling.
+
 This package helps developers create well-structured schemas to define tool behavior, making it easier to build AI agents with dynamic capabilities.
 
 ---
@@ -23,10 +24,10 @@ This package helps developers create well-structured schemas to define tool beha
 
 1. Clone the repository:
 
-   ```bash
-   git clone https://github.com/your-username/tools_schema_generator.git
-   cd tools_schema_generator
-   ```
+```bash
+git clone https://github.com/your-username/tools_schema_generator.git
+cd tools_schema_generator
+```
 
 2. Install dependencies:
 
@@ -143,7 +144,7 @@ const toolsSchema = require("./schemas.json");
 const response = await openai.createChatCompletion({
   model: "gpt-4-0613",
   messages: [{ role: "user", content: "What's my account balance?" }],
-  functions: toolsSchema,
+  tools: toolsSchema,
 });
 
 console.log(response.data);
