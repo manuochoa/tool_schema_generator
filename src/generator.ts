@@ -14,23 +14,27 @@ export function generateSchema({
   const properties: Record<string, any> = {};
   const required: string[] = [];
 
-  params.forEach(({ name, description, schema, enum: enumValues }) => {
-    // 1) Start with the entire schema from the parser
-    //    (e.g. { type: "object", properties: {...}, required: [...] }).
-    // 2) Add/override the "description" from JSDoc.
-    const finalSchema = {
-      ...schema, // Keep everything (type, properties, etc.)
-      description, // Overwrite/merge with JSDoc description
-    };
+  params.forEach(
+    ({ name, description, schema, enum: enumValues, isOptional }) => {
+      // 1) Start with the entire schema from the parser
+      //    (e.g. { type: "object", properties: {...}, required: [...] }).
+      // 2) Add/override the "description" from JSDoc.
+      const finalSchema = {
+        ...schema, // Keep everything (type, properties, etc.)
+        description, // Overwrite/merge with JSDoc description
+      };
 
-    // If we also have an `enum`, attach it
-    if (enumValues && enumValues.length > 0) {
-      finalSchema.enum = enumValues;
+      // If we also have an `enum`, attach it
+      if (enumValues && enumValues.length > 0) {
+        finalSchema.enum = enumValues;
+      }
+
+      properties[name] = finalSchema;
+      if (!isOptional) {
+        required.push(name);
+      }
     }
-
-    properties[name] = finalSchema;
-    required.push(name);
-  });
+  );
 
   return {
     type: "function",

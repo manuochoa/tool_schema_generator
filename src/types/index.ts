@@ -20,6 +20,7 @@ export interface ParsedAnnotation {
     description: string;
     schema: any; // JSON schema
     enum?: string[];
+    isOptional?: boolean;
   }>;
 }
 

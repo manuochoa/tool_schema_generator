@@ -24,14 +24,30 @@ export function parseJsAnnotations(content: string): ParsedAnnotation[] {
     const docBlockText = match[1].trim();
     const docBlockEndIndex = annotationRegex.lastIndex;
 
-    // 1) Parse doc block => docDescription, param lines
+    // Check if the doc block or subsequent function is commented out
+    const remainingContent = content.slice(docBlockEndIndex).trim();
+    const isCommentedOut = /^\s*\/\/.*$/m.test(
+      content.slice(docBlockEndIndex - match[0].length, docBlockEndIndex)
+    );
+    if (isCommentedOut) {
+      console.warn("Skipped a commented-out function or doc block.");
+      continue;
+    }
+
+    // Parse doc block => docDescription, param lines
     const { finalDescription, rawParams } = parseDocBlock(docBlockText);
 
-    // 2) Find function name in remainder
-    const remainingContent = content.slice(docBlockEndIndex);
+    // Find function name in remainder
     const fnName = findNextFunctionName(remainingContent);
 
-    // 3) Convert raw param lines => final param schemas
+    if (fnName === "unknown") {
+      console.warn(
+        "Function name could not be determined. Skipping this JSDoc comment."
+      );
+      continue; // Skip if function name is unknown
+    }
+
+    // Convert raw param lines => final param schemas
     const paramSchemas = buildParamSchemas(rawParams);
 
     annotations.push({
@@ -341,18 +357,43 @@ function buildSubProperties(
 }
 
 /**
- * findNextFunctionName => same as before
+ * findNextFunctionName:
+ *  - Extracts the function name from the remaining content using regex patterns.
  */
 function findNextFunctionName(remaining: string): string {
   const patterns = [
+    // Arrow function patterns first
+    /\bconst\s+(\w+)\s*=\s*async\s*\(\s*\{[^}]*\}\s*\)\s*=>\s*\{/,
+    /\bconst\s+(\w+)\s*=\s*async\s*\([^)]*\)\s*=>\s*\{/,
+    /\bconst\s+(\w+)\s*=\s*async\s*=>\s*\{/,
+    /\bconst\s+(\w+)\s*=\s*\(\s*[^)]*\)\s*=>\s*\{/,
+    /\bexport\s+const\s+(\w+)\s*=\s*async\s*\(\s*\{[^}]*\}\s*\)\s*=>\s*\{/,
+    /\bexport\s+const\s+(\w+)\s*=\s*async\s*\([^)]*\)\s*=>\s*\{/,
+    /\bexport\s+const\s+(\w+)\s*=\s*async\s*=>\s*\{/,
+    /\bexport\s+const\s+(\w+)\s*=\s*\(\s*[^)]*\)\s*=>\s*\{/,
+    // Traditional function patterns
+    /\bexport\s+async\s+function\s+(\w+)\s*\(/,
+    /\bexport\s+function\s+(\w+)\s*\(/,
     /\basync\s+function\s+(\w+)\s*\(/,
     /\bfunction\s+(\w+)\s*\(/,
-    /\bconst\s+(\w+)\s*=\s*async\s*\(/,
-    /\bconst\s+(\w+)\s*=\s*\(/,
   ];
-  for (const regex of patterns) {
-    const match = regex.exec(remaining);
-    if (match) return match[1];
+
+  // Split the input into lines and process each line
+  const lines = remaining.split(/\r?\n/);
+
+  for (const line of lines) {
+    // Skip lines that are comments or empty
+    if (/^\s*\/\//.test(line) || line.trim() === "") {
+      continue;
+    }
+
+    for (const regex of patterns) {
+      const match = regex.exec(line);
+      if (match) {
+        return match[1];
+      }
+    }
   }
+
   return "unknown";
 }
